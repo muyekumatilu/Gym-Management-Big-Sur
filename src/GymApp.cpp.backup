@@ -1,0 +1,2092 @@
+// File: src/GymApp.cpp
+#include "GymApp.h"
+#include <wx/msgdlg.h>
+#include <wx/filedlg.h>
+#include <wx/utils.h>
+#include <wx/sizer.h>
+
+// Implement the application
+wxIMPLEMENT_APP(GymApp);
+
+// Application initialization
+bool GymApp::OnInit() {
+    // Initialize database
+    DatabaseManager* db = DatabaseManager::getInstance();
+    if (!db->connect()) {
+        wxMessageBox("Failed to connect to database!", "Database Error", 
+                     wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    // Create main frame
+    MainFrame* frame = new MainFrame();
+    frame->Show(true);
+    
+    return true;
+}
+
+int GymApp::OnExit() {
+    // Cleanup database connection
+    DatabaseManager* db = DatabaseManager::getInstance();
+    if (db) {
+        db->disconnect();
+    }
+    return 0;
+}
+
+// Event table for MainFrame
+wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
+    EVT_MENU(wxID_EXIT, MainFrame::OnExit)
+    EVT_MENU(wxID_ABOUT, MainFrame::OnAbout)
+    EVT_MENU(ID_REFRESH_DATA, MainFrame::OnRefreshData)
+    EVT_MENU(ID_BACKUP_DB, MainFrame::OnBackupDatabase)
+    EVT_MENU(ID_RESTORE_DB, MainFrame::OnRestoreDatabase)
+    EVT_MENU(ID_SETTINGS, MainFrame::OnSettings)
+    EVT_MENU(ID_NEW_CUSTOMER, MainFrame::OnNewCustomer)
+    EVT_MENU(ID_QUICK_CHECKIN, MainFrame::OnQuickCheckIn)
+    EVT_MENU(ID_DAILY_PAYMENT, MainFrame::OnDailyPayment)
+    EVT_MENU(ID_VIEW_REPORTS, MainFrame::OnViewReports)
+    EVT_TIMER(ID_REFRESH_TIMER, MainFrame::OnTimer)
+    EVT_CLOSE(MainFrame::OnClose)
+wxEND_EVENT_TABLE()
+
+// MainFrame constructor
+MainFrame::MainFrame() : wxFrame(nullptr, wxID_ANY, "Gym Management System", 
+                                wxDefaultPosition, wxSize(1200, 800)),
+                        dbManager(nullptr), refreshTimer(nullptr) {
+    
+    // Initialize database manager
+    dbManager = DatabaseManager::getInstance();
+    
+    // Create UI components
+    CreateMenuBar();
+    CreateToolBar();
+    CreateStatusBar();
+    
+    // Create main notebook
+    notebook = new wxNotebook(this, wxID_ANY);
+    
+    // Create panels
+    dashboardPanel = new DashboardPanel(notebook);
+    customerPanel = new CustomerPanel(notebook);
+    transactionPanel = new TransactionPanel(notebook);
+    inventoryPanel = nullptr; // Will be implemented in Phase 2
+    reportsPanel = nullptr;   // Will be implemented in Phase 3
+    
+    // Add pages to notebook
+    notebook->AddPage(dashboardPanel, "Dashboard", true);
+    notebook->AddPage(customerPanel, "Customers");
+    notebook->AddPage(transactionPanel, "Transactions");
+    
+    // Create main sizer
+    wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+    mainSizer->Add(notebook, 1, wxEXPAND | wxALL, 5);
+    
+    SetSizer(mainSizer);
+    
+    // Initialize refresh timer (refresh every 30 seconds)
+    refreshTimer = new wxTimer(this, ID_REFRESH_TIMER);
+    refreshTimer->Start(30000);
+    
+    // Center the frame
+    Center();
+    
+    // Initial data refresh
+    RefreshAllPanels();
+}
+
+MainFrame::~MainFrame() {
+    if (refreshTimer) {
+        refreshTimer->Stop();
+        delete refreshTimer;
+    }
+}
+
+void MainFrame::CreateMenuBar() {
+    menuBar = new wxMenuBar();
+    
+    // File menu
+    wxMenu* fileMenu = new wxMenu();
+    fileMenu->Append(ID_REFRESH_DATA, "&Refresh Data\tF5", "Refresh all data");
+    fileMenu->AppendSeparator();
+    fileMenu->Append(ID_BACKUP_DB, "&Backup Database", "Backup database");
+    fileMenu->Append(ID_RESTORE_DB, "&Restore Database", "Restore database");
+    fileMenu->AppendSeparator();
+    fileMenu->Append(ID_SETTINGS, "&Settings\tCtrl+,", "Open settings");
+    fileMenu->AppendSeparator();
+    fileMenu->Append(wxID_EXIT, "E&xit\tCtrl+Q", "Exit the application");
+    
+    // Help menu
+    wxMenu* helpMenu = new wxMenu();
+    helpMenu->Append(wxID_ABOUT, "&About", "Show about dialog");
+    
+    // Add menus to menu bar
+    menuBar->Append(fileMenu, "&File");
+    menuBar->Append(helpMenu, "&Help");
+    
+    SetMenuBar(menuBar);
+}
+
+void MainFrame::CreateToolBar() {
+    toolBar = wxFrame::CreateToolBar(wxTB_HORIZONTAL | wxTB_TEXT);
+    
+    // Add toolbar buttons (we'll add icons later)
+    toolBar->AddTool(ID_REFRESH_DATA, "Refresh", wxNullBitmap, "Refresh Data");
+    toolBar->AddSeparator();
+    toolBar->AddTool(ID_NEW_CUSTOMER, "New Customer", wxNullBitmap, "Add New Customer");
+    toolBar->AddTool(ID_QUICK_CHECKIN, "Check In", wxNullBitmap, "Quick Check In");
+    toolBar->AddTool(ID_DAILY_PAYMENT, "Payment", wxNullBitmap, "Daily Payment");
+    toolBar->AddSeparator();
+    toolBar->AddTool(ID_VIEW_REPORTS, "Reports", wxNullBitmap, "View Reports");
+    
+    toolBar->Realize();
+}
+
+void MainFrame::CreateStatusBar() {
+    statusBar = wxFrame::CreateStatusBar(3);
+    statusBar->SetStatusText("Ready", 0);
+    statusBar->SetStatusText("Database: Connected", 1);
+    statusBar->SetStatusText("", 2);
+    
+    // Set status bar widths
+    int widths[3] = {-1, 150, 100};
+    statusBar->SetStatusWidths(3, widths);
+}
+
+void MainFrame::UpdateStatusBar() {
+    if (!statusBar) return;
+    
+    // Update customer count
+    std::vector<Customer> customers = Customer::getAllCustomers();
+    wxString customerInfo = wxString::Format("Customers: %zu", customers.size());
+    statusBar->SetStatusText(customerInfo, 2);
+    
+    // Update time
+    wxDateTime now = wxDateTime::Now();
+    statusBar->SetStatusText(now.Format("%H:%M:%S"), 0);
+}
+
+void MainFrame::RefreshAllPanels() {
+    if (dashboardPanel) dashboardPanel->RefreshData();
+    if (customerPanel) customerPanel->RefreshData();
+    if (transactionPanel) transactionPanel->RefreshData();
+    
+    UpdateStatusBar();
+}
+
+// Event handlers
+void MainFrame::OnExit(wxCommandEvent& event) {
+    Close(true);
+}
+
+void MainFrame::OnAbout(wxCommandEvent& event) {
+    wxMessageBox("Gym Management System v1.0\n\n"
+                 "A comprehensive gym management solution\n"
+                 "Built with wxWidgets and SQLite",
+                 "About Gym Management System",
+                 wxOK | wxICON_INFORMATION);
+}
+
+void MainFrame::OnRefreshData(wxCommandEvent& event) {
+    RefreshAllPanels();
+    statusBar->SetStatusText("Data refreshed", 0);
+}
+
+void MainFrame::OnBackupDatabase(wxCommandEvent& event) {
+    wxFileDialog saveDialog(this, "Save database backup", "", "",
+                           "SQLite files (*.db)|*.db",
+                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    
+    if (saveDialog.ShowModal() == wxID_OK) {
+        // TODO: Implement database backup functionality
+        wxString path = saveDialog.GetPath();
+        statusBar->SetStatusText("Database backed up to: " + path, 0);
+    }
+}
+
+void MainFrame::OnRestoreDatabase(wxCommandEvent& event) {
+    wxFileDialog openDialog(this, "Choose database file to restore", "", "",
+                           "SQLite files (*.db)|*.db",
+                           wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    
+    if (openDialog.ShowModal() == wxID_OK) {
+        // TODO: Implement database restore functionality
+        wxString path = openDialog.GetPath();
+        statusBar->SetStatusText("Database restored from: " + path, 0);
+        RefreshAllPanels();
+    }
+}
+
+void MainFrame::OnSettings(wxCommandEvent& event) {
+    // TODO: Implement settings dialog
+    wxMessageBox("Settings dialog not yet implemented", "Settings", wxOK | wxICON_INFORMATION);
+}
+
+void MainFrame::OnTimer(wxTimerEvent& event) {
+    UpdateStatusBar();
+}
+
+void MainFrame::OnNewCustomer(wxCommandEvent& event) {
+    // Switch to customer tab and trigger new customer
+    notebook->SetSelection(1); // Customer tab
+    
+    // Clear the form for new customer entry
+    if (customerPanel) {
+        customerPanel->ClearCustomerForm();
+        customerPanel->GetFirstNameControl()->SetFocus();
+    }
+}
+
+void MainFrame::OnQuickCheckIn(wxCommandEvent& event) {
+    // Switch to customer tab for quick check-in
+    notebook->SetSelection(1); // Customer tab
+    statusBar->SetStatusText("Select a customer to check in", 0);
+}
+
+void MainFrame::OnDailyPayment(wxCommandEvent& event) {
+    // Switch to transaction tab
+    notebook->SetSelection(2); // Transaction tab
+    
+    // Set transaction type to daily fee
+    if (transactionPanel) {
+        transactionPanel->SetTransactionTypeToDaily();
+    }
+}
+
+void MainFrame::OnViewReports(wxCommandEvent& event) {
+    wxMessageBox("Reports functionality will be implemented in Phase 3", 
+                 "Reports", wxOK | wxICON_INFORMATION);
+}
+
+void MainFrame::OnClose(wxCloseEvent& event) {
+    if (refreshTimer) {
+        refreshTimer->Stop();
+    }
+    Destroy();
+}
+
+// Public methods for panel communication
+void MainFrame::RefreshCustomerPanel() {
+    if (customerPanel) customerPanel->RefreshData();
+}
+
+void MainFrame::RefreshTransactionPanel() {
+    if (transactionPanel) transactionPanel->RefreshData();
+}
+
+void MainFrame::RefreshInventoryPanel() {
+    // Will be implemented in Phase 2
+}
+
+void MainFrame::RefreshReportsPanel() {
+    // Will be implemented in Phase 3
+}
+
+void MainFrame::RefreshDashboardPanel() {
+    if (dashboardPanel) dashboardPanel->RefreshData();
+}
+
+// Dashboard Panel Implementation
+wxBEGIN_EVENT_TABLE(DashboardPanel, wxPanel)
+    EVT_BUTTON(ID_QUICK_CHECKIN, DashboardPanel::OnQuickCheckIn)
+    EVT_BUTTON(ID_NEW_CUSTOMER, DashboardPanel::OnNewCustomer)
+    EVT_BUTTON(ID_DAILY_PAYMENT, DashboardPanel::OnDailyPayment)
+    EVT_BUTTON(ID_VIEW_REPORTS, DashboardPanel::OnViewReports)
+    EVT_BUTTON(ID_REFRESH_DATA, DashboardPanel::OnRefresh)
+wxEND_EVENT_TABLE()
+
+DashboardPanel::DashboardPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
+    CreateLayout();
+    RefreshData();
+}
+
+void DashboardPanel::CreateLayout() {
+    wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+    
+    // Title
+    wxStaticText* title = new wxStaticText(this, wxID_ANY, "Dashboard", 
+                                          wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
+    wxFont titleFont = title->GetFont();
+    titleFont.SetPointSize(16);
+    titleFont.SetWeight(wxFONTWEIGHT_BOLD);
+    title->SetFont(titleFont);
+    mainSizer->Add(title, 0, wxEXPAND | wxALL, 10);
+    
+    // Quick stats section
+    wxStaticBox* statsBox = new wxStaticBox(this, wxID_ANY, "Quick Statistics");
+    wxStaticBoxSizer* statsSizer = new wxStaticBoxSizer(statsBox, wxVERTICAL);
+    
+    wxFlexGridSizer* statsGrid = new wxFlexGridSizer(4, 2, 10, 20);
+    statsGrid->AddGrowableCol(1);
+    
+    // Customer stats
+    statsGrid->Add(new wxStaticText(this, wxID_ANY, "Total Customers:"));
+    totalCustomersText = new wxStaticText(this, wxID_ANY, "0");
+    statsGrid->Add(totalCustomersText);
+    
+    statsGrid->Add(new wxStaticText(this, wxID_ANY, "Active Customers:"));
+    activeCustomersText = new wxStaticText(this, wxID_ANY, "0");
+    statsGrid->Add(activeCustomersText);
+    
+    statsGrid->Add(new wxStaticText(this, wxID_ANY, "Expired Customers:"));
+    expiredCustomersText = new wxStaticText(this, wxID_ANY, "0");
+    statsGrid->Add(expiredCustomersText);
+    
+    statsGrid->Add(new wxStaticText(this, wxID_ANY, "Currently Checked In:"));
+    currentCheckedInText = new wxStaticText(this, wxID_ANY, "0");
+    statsGrid->Add(currentCheckedInText);
+    
+    statsSizer->Add(statsGrid, 0, wxEXPAND | wxALL, 10);
+    
+    // Revenue section
+    wxStaticBox* revenueBox = new wxStaticBox(this, wxID_ANY, "Revenue Summary");
+    wxStaticBoxSizer* revenueSizer = new wxStaticBoxSizer(revenueBox, wxVERTICAL);
+    
+    wxFlexGridSizer* revenueGrid = new wxFlexGridSizer(3, 2, 10, 20);
+    revenueGrid->AddGrowableCol(1);
+    
+    revenueGrid->Add(new wxStaticText(this, wxID_ANY, "Today's Revenue:"));
+    todayRevenueText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    revenueGrid->Add(todayRevenueText);
+    
+    revenueGrid->Add(new wxStaticText(this, wxID_ANY, "This Week:"));
+    weekRevenueText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    revenueGrid->Add(weekRevenueText);
+    
+    revenueGrid->Add(new wxStaticText(this, wxID_ANY, "This Month:"));
+    monthRevenueText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    revenueGrid->Add(monthRevenueText);
+    
+    revenueSizer->Add(revenueGrid, 0, wxEXPAND | wxALL, 10);
+    
+    // Quick actions
+    wxStaticBox* actionsBox = new wxStaticBox(this, wxID_ANY, "Quick Actions");
+    wxStaticBoxSizer* actionsSizer = new wxStaticBoxSizer(actionsBox, wxHORIZONTAL);
+    
+    quickCheckInBtn = new wxButton(this, ID_QUICK_CHECKIN, "Quick Check-In");
+    newCustomerBtn = new wxButton(this, ID_NEW_CUSTOMER, "New Customer");
+    dailyPaymentBtn = new wxButton(this, ID_DAILY_PAYMENT, "Daily Payment");
+    viewReportsBtn = new wxButton(this, ID_VIEW_REPORTS, "View Reports");
+    
+    actionsSizer->Add(quickCheckInBtn, 0, wxALL, 5);
+    actionsSizer->Add(newCustomerBtn, 0, wxALL, 5);
+    actionsSizer->Add(dailyPaymentBtn, 0, wxALL, 5);
+    actionsSizer->Add(viewReportsBtn, 0, wxALL, 5);
+    
+    // Recent activity
+    wxStaticBox* activityBox = new wxStaticBox(this, wxID_ANY, "Recent Activity");
+    wxStaticBoxSizer* activitySizer = new wxStaticBoxSizer(activityBox, wxVERTICAL);
+    
+    recentActivityList = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, 
+                                       wxSize(-1, 200), wxLC_REPORT);
+    recentActivityList->AppendColumn("Time", wxLIST_FORMAT_LEFT, 100);
+    recentActivityList->AppendColumn("Activity", wxLIST_FORMAT_LEFT, 200);
+    recentActivityList->AppendColumn("Customer", wxLIST_FORMAT_LEFT, 150);
+    recentActivityList->AppendColumn("Amount", wxLIST_FORMAT_RIGHT, 100);
+    
+    activitySizer->Add(recentActivityList, 1, wxEXPAND | wxALL, 10);
+    
+    // Arrange main layout
+    wxBoxSizer* topSizer = new wxBoxSizer(wxHORIZONTAL);
+    topSizer->Add(statsSizer, 1, wxEXPAND | wxALL, 5);
+    topSizer->Add(revenueSizer, 1, wxEXPAND | wxALL, 5);
+    
+    mainSizer->Add(topSizer, 0, wxEXPAND);
+    mainSizer->Add(actionsSizer, 0, wxEXPAND | wxALL, 5);
+    mainSizer->Add(activitySizer, 1, wxEXPAND | wxALL, 5);
+    
+    SetSizer(mainSizer);
+}
+
+void DashboardPanel::RefreshData() {
+    UpdateQuickStats();
+    UpdateRecentActivity();
+}
+
+void DashboardPanel::UpdateQuickStats() {
+    // Get customer statistics
+    std::vector<Customer> allCustomers = Customer::getAllCustomers();
+    int totalCustomers = allCustomers.size();
+    int activeCustomers = 0;
+    int expiredCustomers = 0;
+    int checkedIn = 0; // TODO: Implement check-in tracking
+    
+    for (const Customer& customer : allCustomers) {
+        if (customer.getStatus() == CustomerStatus::ACTIVE) {
+            activeCustomers++;
+        } else {
+            expiredCustomers++;
+        }
+    }
+    
+    // Update customer stats
+    totalCustomersText->SetLabel(wxString::Format("%d", totalCustomers));
+    activeCustomersText->SetLabel(wxString::Format("%d", activeCustomers));
+    expiredCustomersText->SetLabel(wxString::Format("%d", expiredCustomers));
+    currentCheckedInText->SetLabel(wxString::Format("%d", checkedIn));
+    
+    // Calculate revenue (simplified for now)
+    std::time_t today = std::time(nullptr);
+    std::time_t weekStart = today - (7 * 24 * 60 * 60); // 7 days ago
+    std::time_t monthStart = today - (30 * 24 * 60 * 60); // 30 days ago
+    
+    double todayRevenue = Transaction::getTotalRevenueByDate(today, today);
+    double weekRevenue = Transaction::getTotalRevenueByDate(weekStart, today);
+    double monthRevenue = Transaction::getTotalRevenueByDate(monthStart, today);
+    
+    todayRevenueText->SetLabel(wxString::Format("KSh %.2f", todayRevenue));
+    weekRevenueText->SetLabel(wxString::Format("KSh %.2f", weekRevenue));
+    monthRevenueText->SetLabel(wxString::Format("KSh %.2f", monthRevenue));
+}
+
+void DashboardPanel::UpdateRecentActivity() {
+    recentActivityList->DeleteAllItems();
+    
+    // Get recent transactions
+    std::vector<Transaction> recentTransactions = Transaction::getAllTransactions();
+    
+    // Show only the most recent 20 transactions
+    int count = 0;
+    for (auto it = recentTransactions.rbegin(); 
+         it != recentTransactions.rend() && count < 20; 
+         ++it, ++count) {
+        
+        const Transaction& transaction = *it;
+        
+        long index = recentActivityList->InsertItem(count, transaction.getFormattedDate());
+        recentActivityList->SetItem(index, 1, transaction.getTransactionTypeString());
+        
+        // Get customer name
+        Customer customer;
+        if (customer.loadFromDatabase(transaction.getCustomerId())) {
+            recentActivityList->SetItem(index, 2, customer.getFullName());
+        } else {
+            recentActivityList->SetItem(index, 2, "Unknown");
+        }
+        
+        recentActivityList->SetItem(index, 3, transaction.getFormattedAmount());
+    }
+}
+
+// Dashboard event handlers
+void DashboardPanel::OnQuickCheckIn(wxCommandEvent& event) {
+    QuickCheckInDialog dialog(this);
+    
+    if (dialog.ShowModal() == wxID_OK) {
+        // Refresh all panels after successful check-in
+        MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+        if (mainFrame) {
+            mainFrame->RefreshDashboardPanel();
+            mainFrame->RefreshCustomerPanel();
+            mainFrame->RefreshTransactionPanel();
+        }
+    }
+}
+void DashboardPanel::OnNewCustomer(wxCommandEvent& event) {
+    // Switch to customer tab and trigger new customer
+    MainFrame* parent = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+    if (parent) {
+        // Switch to customer tab (index 1)
+        wxNotebook* notebook = dynamic_cast<wxNotebook*>(GetParent());
+        if (notebook) {
+            notebook->SetSelection(1);
+        }
+    }
+}
+
+void DashboardPanel::OnDailyPayment(wxCommandEvent& event) {
+    // Switch to transaction tab
+    MainFrame* parent = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+    if (parent) {
+        wxNotebook* notebook = dynamic_cast<wxNotebook*>(GetParent());
+        if (notebook) {
+            notebook->SetSelection(2);
+        }
+    }
+}
+
+void DashboardPanel::OnViewReports(wxCommandEvent& event) {
+    wxMessageBox("Reports functionality will be implemented in Phase 3", 
+                 "Reports", wxOK | wxICON_INFORMATION);
+}
+
+void DashboardPanel::OnRefresh(wxCommandEvent& event) {
+    RefreshData();
+}
+
+// Customer Panel Implementation
+wxBEGIN_EVENT_TABLE(CustomerPanel, wxPanel)
+    EVT_LIST_ITEM_SELECTED(wxID_ANY, CustomerPanel::OnCustomerSelected)
+    EVT_LIST_ITEM_ACTIVATED(wxID_ANY, CustomerPanel::OnCustomerDoubleClick)
+    EVT_BUTTON(wxID_ADD, CustomerPanel::OnAddCustomer)
+    EVT_BUTTON(wxID_EDIT, CustomerPanel::OnEditCustomer)
+    EVT_BUTTON(wxID_DELETE, CustomerPanel::OnDeleteCustomer)
+    EVT_BUTTON(wxID_REFRESH, CustomerPanel::OnRenewMembership)
+    EVT_BUTTON(wxID_FORWARD, CustomerPanel::OnCheckIn)
+    EVT_BUTTON(wxID_BACKWARD, CustomerPanel::OnCheckOut)
+    EVT_BUTTON(wxID_PROPERTIES, CustomerPanel::OnViewTransactions)
+    EVT_BUTTON(wxID_FIND, CustomerPanel::OnSearch)
+    EVT_BUTTON(wxID_CLEAR, CustomerPanel::OnClearSearch)
+    EVT_CHOICE(ID_MEMBERSHIP_FILTER, CustomerPanel::OnMembershipFilterChange)
+    EVT_CHOICE(ID_STATUS_FILTER, CustomerPanel::OnMembershipFilterChange)
+    EVT_CHOICE(ID_MEMBERSHIP_CHOICE, CustomerPanel::OnMembershipTypeChange)
+wxEND_EVENT_TABLE()
+
+CustomerPanel::CustomerPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY), selectedCustomerId(-1) {
+    CreateLayout();
+    RefreshData();
+}
+
+void CustomerPanel::CreateLayout() {
+    wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+    
+    // Title
+    wxStaticText* title = new wxStaticText(this, wxID_ANY, "Customer Management", 
+                                          wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
+    wxFont titleFont = title->GetFont();
+    titleFont.SetPointSize(16);
+    titleFont.SetWeight(wxFONTWEIGHT_BOLD);
+    title->SetFont(titleFont);
+    mainSizer->Add(title, 0, wxEXPAND | wxALL, 10);
+    
+    // Search and filter section
+    wxStaticBox* searchBox = new wxStaticBox(this, wxID_ANY, "Search & Filter");
+    wxStaticBoxSizer* searchSizer = new wxStaticBoxSizer(searchBox, wxHORIZONTAL);
+    
+    searchSizer->Add(new wxStaticText(this, wxID_ANY, "Search:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    searchText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(200, -1));
+    searchSizer->Add(searchText, 0, wxALL, 5);
+    
+    searchSizer->Add(new wxStaticText(this, wxID_ANY, "Membership:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    membershipFilter = new wxChoice(this, ID_MEMBERSHIP_FILTER);
+    membershipFilter->Append("All");
+    membershipFilter->Append("Daily");
+    membershipFilter->Append("Weekly");
+    membershipFilter->Append("Monthly");
+    membershipFilter->Append("Trainer");
+    membershipFilter->SetSelection(0);
+    searchSizer->Add(membershipFilter, 0, wxALL, 5);
+
+    searchSizer->Add(new wxStaticText(this, wxID_ANY, "Status:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    statusFilter = new wxChoice(this, ID_STATUS_FILTER);
+    statusFilter->Append("All");
+    statusFilter->Append("Active");
+    statusFilter->Append("Expired");
+    statusFilter->SetSelection(0);
+    searchSizer->Add(statusFilter, 0, wxALL, 5);
+    
+    searchBtn = new wxButton(this, wxID_FIND, "Search");
+    clearSearchBtn = new wxButton(this, wxID_CLEAR, "Clear");
+    searchSizer->Add(searchBtn, 0, wxALL, 5);
+    searchSizer->Add(clearSearchBtn, 0, wxALL, 5);
+    
+    mainSizer->Add(searchSizer, 0, wxEXPAND | wxALL, 5);
+    
+    // Main content area (horizontal split)
+    wxBoxSizer* contentSizer = new wxBoxSizer(wxHORIZONTAL);
+    
+    // Customer list (left side)
+    wxStaticBox* listBox = new wxStaticBox(this, wxID_ANY, "Customer List");
+    wxStaticBoxSizer* listSizer = new wxStaticBoxSizer(listBox, wxVERTICAL);
+    
+    customerList = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, 
+                                 wxSize(600, 400), wxLC_REPORT | wxLC_SINGLE_SEL);
+    customerList->AppendColumn("ID", wxLIST_FORMAT_RIGHT, 50);
+    customerList->AppendColumn("Name", wxLIST_FORMAT_LEFT, 150);
+    customerList->AppendColumn("Phone", wxLIST_FORMAT_LEFT, 120);
+    customerList->AppendColumn("Membership", wxLIST_FORMAT_CENTER, 100);
+    customerList->AppendColumn("Status", wxLIST_FORMAT_CENTER, 80);
+    customerList->AppendColumn("Expiry Date", wxLIST_FORMAT_CENTER, 100);
+    
+    listSizer->Add(customerList, 1, wxEXPAND | wxALL, 5);
+    
+    // Action buttons for customer list
+    wxBoxSizer* listButtonSizer = new wxBoxSizer(wxHORIZONTAL);
+    addBtn = new wxButton(this, wxID_ADD, "Add Customer");
+    editBtn = new wxButton(this, wxID_EDIT, "Edit");
+    deleteBtn = new wxButton(this, wxID_DELETE, "Delete");
+    renewBtn = new wxButton(this, wxID_REFRESH, "Renew");
+    clearFormBtn = new wxButton(this, wxID_NEW, "Clear Form");
+
+    listButtonSizer->Add(addBtn, 0, wxALL, 5);
+    listButtonSizer->Add(editBtn, 0, wxALL, 5);
+    listButtonSizer->Add(deleteBtn, 0, wxALL, 5);
+    listButtonSizer->Add(renewBtn, 0, wxALL, 5);
+    listButtonSizer->Add(clearFormBtn, 0, wxALL, 5);
+    
+    listSizer->Add(listButtonSizer, 0, wxALIGN_CENTER);
+    contentSizer->Add(listSizer, 2, wxEXPAND | wxALL, 5);
+    
+    // Customer form (right side)
+    wxStaticBox* formBox = new wxStaticBox(this, wxID_ANY, "Customer Details");
+    wxStaticBoxSizer* formSizer = new wxStaticBoxSizer(formBox, wxVERTICAL);
+    
+    wxFlexGridSizer* formGrid = new wxFlexGridSizer(5, 2, 10, 10);
+    formGrid->AddGrowableCol(1);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "First Name:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    firstNameText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    formGrid->Add(firstNameText, 1, wxEXPAND);
+
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Last Name:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    lastNameText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    formGrid->Add(lastNameText, 1, wxEXPAND);
+
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Phone:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    phoneText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    formGrid->Add(phoneText, 1, wxEXPAND);
+
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Email:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    emailText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    formGrid->Add(emailText, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Membership:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    membershipChoice = new wxChoice(this, ID_MEMBERSHIP_CHOICE);
+    membershipChoice->Append("Select membership type");  // Add this as first option
+    membershipChoice->Append("Daily");
+    membershipChoice->Append("Weekly");
+    membershipChoice->Append("Monthly");
+    membershipChoice->Append("Trainer");
+    membershipChoice->SetSelection(0); // Default to "Select membership type"
+    formGrid->Add(membershipChoice, 1, wxEXPAND);
+    
+    formSizer->Add(formGrid, 0, wxEXPAND | wxALL, 10);
+    
+    // Quick action buttons
+    wxBoxSizer* actionButtonSizer = new wxBoxSizer(wxHORIZONTAL);
+    checkInBtn = new wxButton(this, wxID_FORWARD, "Check In");
+    checkOutBtn = new wxButton(this, wxID_BACKWARD, "Check Out");
+    viewTransactionsBtn = new wxButton(this, wxID_PROPERTIES, "View Transactions");
+    
+    actionButtonSizer->Add(checkInBtn, 0, wxALL, 5);
+    actionButtonSizer->Add(checkOutBtn, 0, wxALL, 5);
+    actionButtonSizer->Add(viewTransactionsBtn, 0, wxALL, 5);
+    
+    formSizer->Add(actionButtonSizer, 0, wxALIGN_CENTER | wxTOP, 10);
+    
+    contentSizer->Add(formSizer, 1, wxEXPAND | wxALL, 5);
+    
+    mainSizer->Add(contentSizer, 1, wxEXPAND);
+    
+    SetSizer(mainSizer);
+    
+    // Initially disable form buttons
+    UpdateButtonStates();
+}
+
+void CustomerPanel::RefreshData() {
+    PopulateCustomerList();
+    ClearCustomerForm();
+    selectedCustomerId = -1;
+    UpdateButtonStates();
+}
+
+void CustomerPanel::PopulateCustomerList() {
+    std::vector<Customer> customers = Customer::getAllCustomers();
+    PopulateCustomerList(customers);
+}
+
+void CustomerPanel::PopulateCustomerList(const std::vector<Customer>& customers) {
+    customerList->DeleteAllItems();
+    
+    for (size_t i = 0; i < customers.size(); ++i) {
+        const Customer& customer = customers[i];
+        
+        long index = customerList->InsertItem(i, wxString::Format("%d", customer.getCustomerId()));
+        customerList->SetItem(index, 1, customer.getFullName());
+        customerList->SetItem(index, 2, customer.getPhone());
+        customerList->SetItem(index, 3, customer.getMembershipTypeString());
+        customerList->SetItem(index, 4, customer.getStatusString());
+        
+        // Format expiry date
+        if (customer.getExpiryDate() > 0) {
+            std::time_t expiryTime = customer.getExpiryDate();
+            struct tm* timeinfo = localtime(&expiryTime);
+            char buffer[11];
+            strftime(buffer, 11, "%Y-%m-%d", timeinfo);
+            customerList->SetItem(index, 5, buffer);
+        } else {
+            customerList->SetItem(index, 5, "N/A");
+        }
+        
+        // Store customer ID in item data
+        customerList->SetItemData(index, customer.getCustomerId());
+    }
+}
+
+void CustomerPanel::UpdateCustomerForm(const Customer& customer) {
+    firstNameText->SetValue(customer.getFirstName());
+    lastNameText->SetValue(customer.getLastName());
+    phoneText->SetValue(customer.getPhone());
+    emailText->SetValue(customer.getEmail());
+    
+    // Set membership type - adjust indices since we added "Select membership type" at index 0
+    switch (customer.getMembershipType()) {
+        case MembershipType::DAILY:
+            membershipChoice->SetSelection(1); // Daily is now at index 1
+            break;
+        case MembershipType::WEEKLY:
+            membershipChoice->SetSelection(2); // Weekly is now at index 2
+            break;
+        case MembershipType::MONTHLY:
+            membershipChoice->SetSelection(3); // Monthly is now at index 3
+            break;
+        case MembershipType::TRAINER:
+            membershipChoice->SetSelection(4); // Trainer is now at index 4
+            break;
+    }
+    
+    // Force a refresh of the choice control
+    membershipChoice->Refresh();
+    membershipChoice->Update();
+}
+
+void CustomerPanel::SelectCustomer(int customerId) {
+    selectedCustomerId = customerId;
+    
+    // Load and display customer details
+    Customer customer;
+    if (customer.loadFromDatabase(customerId)) {
+        UpdateCustomerForm(customer);
+    }
+    
+    // Highlight in the list
+    HighlightSelectedCustomer();
+    UpdateButtonStates();
+}
+
+void CustomerPanel::HighlightSelectedCustomer() {
+    // Clear all selections first
+    for (long i = 0; i < customerList->GetItemCount(); ++i) {
+        customerList->SetItemState(i, 0, wxLIST_STATE_SELECTED);
+    }
+    
+    // Highlight the currently selected customer
+    if (selectedCustomerId != -1) {
+        for (long i = 0; i < customerList->GetItemCount(); ++i) {
+            if (customerList->GetItemData(i) == selectedCustomerId) {
+                customerList->SetItemState(i, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
+                customerList->EnsureVisible(i);
+                break;
+            }
+        }
+    }
+}
+
+void CustomerPanel::ClearCustomerForm() {
+    firstNameText->Clear();
+    lastNameText->Clear();
+    phoneText->Clear();
+    emailText->Clear();
+    membershipChoice->SetSelection(0); // Reset to "Select membership type"
+}
+
+bool CustomerPanel::ValidateCustomerForm() {
+    if (firstNameText->GetValue().IsEmpty()) {
+        wxMessageBox("First name is required", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    if (lastNameText->GetValue().IsEmpty()) {
+        wxMessageBox("Last name is required", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    if (phoneText->GetValue().IsEmpty()) {
+        wxMessageBox("Phone number is required", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    // Validate phone number format
+    std::string phone = phoneText->GetValue().ToStdString();
+    if (phone.length() < 9) {
+        wxMessageBox("Please enter a valid phone number", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    if (membershipChoice->GetSelection() == 0) {
+        wxMessageBox("Please select a membership type", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    return true;
+}
+
+void CustomerPanel::CheckForSimilarCustomers(const std::string& firstName, const std::string& lastName, const std::string& phone) {
+    std::vector<Customer> allCustomers = Customer::getAllCustomers();
+    std::vector<Customer> similarCustomers;
+    
+    for (const Customer& customer : allCustomers) {
+        // Check for similar names (case-insensitive)
+        std::string existingFirst = customer.getFirstName();
+        std::string existingLast = customer.getLastName();
+        
+        std::transform(existingFirst.begin(), existingFirst.end(), existingFirst.begin(), ::tolower);
+        std::transform(existingLast.begin(), existingLast.end(), existingLast.begin(), ::tolower);
+        
+        std::string newFirst = firstName;
+        std::string newLast = lastName;
+        std::transform(newFirst.begin(), newFirst.end(), newFirst.begin(), ::tolower);
+        std::transform(newLast.begin(), newLast.end(), newLast.begin(), ::tolower);
+        
+        if ((existingFirst == newFirst && existingLast == newLast) ||
+            (customer.getPhone() == phone)) {
+            similarCustomers.push_back(customer);
+        }
+    }
+    
+    if (!similarCustomers.empty()) {
+        wxString message = "Similar customers found:\n\n";
+        for (const Customer& similar : similarCustomers) {
+            message += wxString::Format("• %s %s (%s)\n", 
+                                      similar.getFirstName(), 
+                                      similar.getLastName(), 
+                                      similar.getPhone());
+        }
+        message += "\nPlease verify this is not a duplicate.";
+        
+        wxMessageBox(message, "Similar Customers Found", wxOK | wxICON_INFORMATION);
+    }
+}
+
+Customer CustomerPanel::GetCustomerFromForm() {
+    Customer customer;
+    customer.setFirstName(firstNameText->GetValue().ToStdString());
+    customer.setLastName(lastNameText->GetValue().ToStdString());
+    customer.setPhone(phoneText->GetValue().ToStdString());
+    customer.setEmail(emailText->GetValue().ToStdString());
+    
+    // Set membership type - adjust for new indices
+    switch (membershipChoice->GetSelection()) {
+        case 1: // Daily
+            customer.setMembershipType(MembershipType::DAILY);
+            break;
+        case 2: // Weekly
+            customer.setMembershipType(MembershipType::WEEKLY);
+            break;
+        case 3: // Monthly
+            customer.setMembershipType(MembershipType::MONTHLY);
+            break;
+        case 4: // Trainer
+            customer.setMembershipType(MembershipType::TRAINER);
+            break;
+        default:
+            customer.setMembershipType(MembershipType::DAILY); // Default fallback
+            break;
+    }
+    
+    return customer;
+}
+
+std::string CustomerPanel::FormatPhoneNumber(const std::string& phone) {
+    std::string cleanedPhone = phone;
+    
+    // Remove any spaces, dashes, or parentheses
+    cleanedPhone.erase(std::remove_if(cleanedPhone.begin(), cleanedPhone.end(),
+                                     [](char c) { return c == ' ' || c == '-' || c == '(' || c == ')'; }),
+                      cleanedPhone.end());
+    
+    // If phone is empty, return as is
+    if (cleanedPhone.empty()) {
+        return cleanedPhone;
+    }
+    
+    // If it already starts with +254, return as is
+    if (cleanedPhone.substr(0, 4) == "+254") {
+        return cleanedPhone;
+    }
+    
+    // If it starts with 254, add the +
+    if (cleanedPhone.substr(0, 3) == "254") {
+        return "+" + cleanedPhone;
+    }
+    
+    // If it starts with 0, replace with +254
+    if (cleanedPhone[0] == '0' && cleanedPhone.length() >= 10) {
+        return "+254" + cleanedPhone.substr(1);
+    }
+    
+    // If it's a 9-digit number starting with 7, add +254
+    if (cleanedPhone.length() == 9 && cleanedPhone[0] == '7') {
+        return "+254" + cleanedPhone;
+    }
+    
+    // If it's any other format, assume it needs +254 prefix
+    if (cleanedPhone.length() >= 9) {
+        return "+254" + cleanedPhone;
+    }
+    
+    // Return original if we can't determine format
+    return cleanedPhone;
+}
+
+void CustomerPanel::OnPhoneTextChange(wxCommandEvent& event) {
+    // Get current cursor position
+    long insertionPoint = phoneText->GetInsertionPoint();
+    
+    // Get current value
+    wxString currentValue = phoneText->GetValue();
+    
+    // Format the phone number
+    std::string formatted = FormatPhoneNumber(currentValue.ToStdString());
+    
+    // Only update if the formatted version is different
+    if (formatted != currentValue.ToStdString()) {
+        phoneText->SetValue(formatted);
+        
+        // Restore cursor position (approximately)
+        phoneText->SetInsertionPoint(std::min(insertionPoint, (long)formatted.length()));
+    }
+}
+
+void CustomerPanel::UpdateButtonStates() {
+    bool hasSelection = (selectedCustomerId != -1);
+    
+    // When a customer is selected, we're in edit mode
+    if (hasSelection) {
+        addBtn->SetLabel("Update Customer");
+        addBtn->Enable(true);
+    } else {
+        addBtn->SetLabel("Add Customer");
+        addBtn->Enable(true);
+    }
+    
+    editBtn->Enable(hasSelection);
+    deleteBtn->Enable(hasSelection);
+    renewBtn->Enable(hasSelection);
+    checkInBtn->Enable(hasSelection);
+    checkOutBtn->Enable(hasSelection);
+    viewTransactionsBtn->Enable(hasSelection);
+}
+
+// Customer Panel Event Handlers
+void CustomerPanel::OnCustomerSelected(wxListEvent& event) {
+    long item = event.GetIndex();
+    if (item != -1) {
+        selectedCustomerId = customerList->GetItemData(item);
+        
+        // Load customer details
+        Customer customer;
+        if (customer.loadFromDatabase(selectedCustomerId)) {
+            UpdateCustomerForm(customer);
+            
+            // Force refresh of the membership choice control
+            membershipChoice->Refresh();
+            membershipChoice->Update();
+        }
+    }
+    UpdateButtonStates();
+}
+
+void CustomerPanel::OnCustomerDoubleClick(wxListEvent& event) {
+    wxCommandEvent dummyEvent;
+    OnEditCustomer(dummyEvent);
+}
+
+void CustomerPanel::OnAddCustomer(wxCommandEvent& event) {
+    if (!ValidateCustomerForm()) {
+        return;
+    }
+    
+    Customer customer = GetCustomerFromForm();
+    
+    // Format the phone number to Kenyan format before saving
+    std::string formattedPhone = FormatPhoneNumber(customer.getPhone());
+    customer.setPhone(formattedPhone);
+    
+    if (selectedCustomerId != -1) {
+        // Update existing customer
+        customer.setCustomerId(selectedCustomerId);
+        
+        if (customer.updateInDatabase()) {
+            wxMessageBox("Customer updated successfully", "Success", wxOK | wxICON_INFORMATION);
+            RefreshData();
+            
+            // Refresh main dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Failed to update customer", "Error", wxOK | wxICON_ERROR);
+        }
+    } else {
+        // Add new customer
+        // Check for similar customers before saving
+        CheckForSimilarCustomers(customer.getFirstName(), customer.getLastName(), formattedPhone);
+        
+        customer.calculateExpiryDate();
+        
+        if (customer.saveToDatabase()) {
+            wxMessageBox("Customer added successfully", "Success", wxOK | wxICON_INFORMATION);
+            RefreshData();
+            
+            // Refresh main dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Failed to add customer", "Error", wxOK | wxICON_ERROR);
+        }
+    }
+}
+
+void CustomerPanel::OnEditCustomer(wxCommandEvent& event) {
+    // This functionality is now handled by OnAddCustomer
+    // when selectedCustomerId != -1
+    OnAddCustomer(event);
+}
+
+void CustomerPanel::OnDeleteCustomer(wxCommandEvent& event) {
+    if (selectedCustomerId == -1) return;
+    
+    int result = wxMessageBox("Are you sure you want to delete this customer?\n"
+                             "This will also delete all associated transactions.",
+                             "Confirm Delete", 
+                             wxYES_NO | wxICON_QUESTION);
+    
+    if (result == wxYES) {
+        if (Customer::deleteCustomer(selectedCustomerId)) {
+            wxMessageBox("Customer deleted successfully", "Success", wxOK | wxICON_INFORMATION);
+            RefreshData();
+            
+            // Refresh main dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Failed to delete customer", "Error", wxOK | wxICON_ERROR);
+        }
+    }
+}
+
+void CustomerPanel::OnRenewMembership(wxCommandEvent& event) {
+    if (selectedCustomerId == -1) return;
+    
+    // TODO: Implement renewal dialog
+    wxMessageBox("Membership renewal dialog will be implemented next", 
+                 "Renew Membership", wxOK | wxICON_INFORMATION);
+}
+
+void CustomerPanel::OnCheckIn(wxCommandEvent& event) {
+    if (selectedCustomerId == -1) return;
+    
+    Customer customer;
+    if (customer.loadFromDatabase(selectedCustomerId)) {
+        if (customer.checkIn()) {
+            wxMessageBox("Customer checked in successfully", "Success", wxOK | wxICON_INFORMATION);
+            
+            // Refresh dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Check-in failed. Please check customer status.", "Error", wxOK | wxICON_ERROR);
+        }
+    }
+}
+
+void CustomerPanel::OnCheckOut(wxCommandEvent& event) {
+    if (selectedCustomerId == -1) return;
+    
+    Customer customer;
+    if (customer.loadFromDatabase(selectedCustomerId)) {
+        if (customer.checkOut()) {
+            wxMessageBox("Customer checked out successfully", "Success", wxOK | wxICON_INFORMATION);
+            
+            // Refresh dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Check-out failed", "Error", wxOK | wxICON_ERROR);
+        }
+    }
+}
+
+void CustomerPanel::OnViewTransactions(wxCommandEvent& event) {
+    if (selectedCustomerId == -1) return;
+    
+    // Switch to transaction panel and filter by customer
+    MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+    if (mainFrame) {
+        wxNotebook* notebook = dynamic_cast<wxNotebook*>(GetParent());
+        if (notebook) {
+            notebook->SetSelection(2); // Transaction tab
+            mainFrame->RefreshTransactionPanel();
+        }
+    }
+}
+
+void CustomerPanel::OnSearch(wxCommandEvent& event) {
+    wxString searchTerm = searchText->GetValue();
+    std::vector<Customer> customers;
+    
+    if (!searchTerm.IsEmpty()) {
+        customers = Customer::findByName(searchTerm.ToStdString());
+    } else {
+        customers = Customer::getAllCustomers();
+    }
+    
+    // Apply membership filter
+    if (membershipFilter->GetSelection() > 0) {
+        MembershipType filterType;
+        switch (membershipFilter->GetSelection()) {
+            case 1: filterType = MembershipType::DAILY; break;
+            case 2: filterType = MembershipType::WEEKLY; break;
+            case 3: filterType = MembershipType::MONTHLY; break;
+            case 4: filterType = MembershipType::TRAINER; break;
+        }
+        
+        customers.erase(std::remove_if(customers.begin(), customers.end(),
+                                     [filterType](const Customer& c) {
+                                         return c.getMembershipType() != filterType;
+                                     }), customers.end());
+    }
+    
+    // Apply status filter
+    if (statusFilter->GetSelection() > 0) {
+        CustomerStatus filterStatus = (statusFilter->GetSelection() == 1) ? 
+                                     CustomerStatus::ACTIVE : CustomerStatus::EXPIRED;
+        
+        customers.erase(std::remove_if(customers.begin(), customers.end(),
+                                     [filterStatus](const Customer& c) {
+                                         return c.getStatus() != filterStatus;
+                                     }), customers.end());
+    }
+    
+    PopulateCustomerList(customers);
+}
+
+void CustomerPanel::OnClearSearch(wxCommandEvent& event) {
+    searchText->Clear();
+    membershipFilter->SetSelection(0);
+    statusFilter->SetSelection(0);
+    PopulateCustomerList();
+}
+
+void CustomerPanel::OnMembershipFilterChange(wxCommandEvent& event) {
+    OnSearch(event);
+}
+
+void CustomerPanel::OnTextEnter(wxCommandEvent& event) {
+    wxObject* source = event.GetEventObject();
+    
+    if (source == firstNameText) {
+        lastNameText->SetFocus();
+    } else if (source == lastNameText) {
+        phoneText->SetFocus();
+    } else if (source == phoneText) {
+        emailText->SetFocus();
+    } else if (source == emailText) {
+        membershipChoice->SetFocus();
+    } else {
+        // If it's the last field or unknown, try to save
+        if (selectedCustomerId == -1) {
+            wxCommandEvent dummyEvent;
+            OnAddCustomer(dummyEvent);
+        } else {
+            wxCommandEvent dummyEvent;
+            OnEditCustomer(dummyEvent);
+        }
+    }
+}
+
+void CustomerPanel::OnClearForm(wxCommandEvent& event) {
+    ClearCustomerForm();
+    selectedCustomerId = -1;
+    UpdateButtonStates();
+    firstNameText->SetFocus();
+}
+
+void CustomerPanel::OnMembershipTypeChange(wxCommandEvent& event) {
+    // Optional: Add logic here for when membership type is manually changed
+    // For example, you could show pricing information or update other fields
+
+}
+
+// Transaction Panel Implementation
+wxBEGIN_EVENT_TABLE(TransactionPanel, wxPanel)
+    EVT_LIST_ITEM_SELECTED(wxID_ANY, TransactionPanel::OnTransactionSelected)
+    EVT_BUTTON(wxID_ADD, TransactionPanel::OnAddTransaction)
+    EVT_BUTTON(wxID_EDIT, TransactionPanel::OnEditTransaction)
+    EVT_BUTTON(wxID_DELETE, TransactionPanel::OnDeleteTransaction)
+    EVT_BUTTON(wxID_UNDO, TransactionPanel::OnRefundTransaction)
+    EVT_BUTTON(wxID_PRINT, TransactionPanel::OnPrintReceipt)
+    EVT_BUTTON(wxID_APPLY, TransactionPanel::OnFilterTransactions)
+    EVT_BUTTON(wxID_CLEAR, TransactionPanel::OnClearFilter)
+    EVT_CHOICE(wxID_ANY, TransactionPanel::OnPaymentTypeChange)
+    EVT_TEXT_ENTER(wxID_ANY, TransactionPanel::OnTextEnter)
+wxEND_EVENT_TABLE()
+
+TransactionPanel::TransactionPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY), selectedTransactionId(-1) {
+    CreateLayout();
+    RefreshData();
+}
+
+void TransactionPanel::CreateLayout() {
+    wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+    
+    // Title
+    wxStaticText* title = new wxStaticText(this, wxID_ANY, "Transaction Management", 
+                                          wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
+    wxFont titleFont = title->GetFont();
+    titleFont.SetPointSize(16);
+    titleFont.SetWeight(wxFONTWEIGHT_BOLD);
+    title->SetFont(titleFont);
+    mainSizer->Add(title, 0, wxEXPAND | wxALL, 10);
+    
+    // Filter section
+    wxStaticBox* filterBox = new wxStaticBox(this, wxID_ANY, "Filters");
+    wxStaticBoxSizer* filterSizer = new wxStaticBoxSizer(filterBox, wxHORIZONTAL);
+    
+    filterSizer->Add(new wxStaticText(this, wxID_ANY, "From:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    fromDate = new wxDatePickerCtrl(this, wxID_ANY);
+    filterSizer->Add(fromDate, 0, wxALL, 5);
+    
+    filterSizer->Add(new wxStaticText(this, wxID_ANY, "To:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    toDate = new wxDatePickerCtrl(this, wxID_ANY);
+    filterSizer->Add(toDate, 0, wxALL, 5);
+    
+    filterSizer->Add(new wxStaticText(this, wxID_ANY, "Payment:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    paymentTypeFilter = new wxChoice(this, wxID_ANY);
+    paymentTypeFilter->Append("All");
+    paymentTypeFilter->Append("Cash");
+    paymentTypeFilter->Append("M-Pesa");
+    paymentTypeFilter->SetSelection(0);
+    filterSizer->Add(paymentTypeFilter, 0, wxALL, 5);
+    
+    filterSizer->Add(new wxStaticText(this, wxID_ANY, "Type:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    transactionTypeFilter = new wxChoice(this, wxID_ANY);
+    transactionTypeFilter->Append("All");
+    transactionTypeFilter->Append("Membership Payment");
+    transactionTypeFilter->Append("Daily Fee");
+    transactionTypeFilter->Append("Renewal");
+    transactionTypeFilter->Append("Refund");
+    transactionTypeFilter->Append("Other");
+    transactionTypeFilter->SetSelection(0);
+    filterSizer->Add(transactionTypeFilter, 0, wxALL, 5);
+    
+    wxButton* filterBtn = new wxButton(this, wxID_APPLY, "Filter");
+    wxButton* clearFilterBtn = new wxButton(this, wxID_CLEAR, "Clear");
+    filterSizer->Add(filterBtn, 0, wxALL, 5);
+    filterSizer->Add(clearFilterBtn, 0, wxALL, 5);
+    
+    mainSizer->Add(filterSizer, 0, wxEXPAND | wxALL, 5);
+    
+    // Main content area
+    wxBoxSizer* contentSizer = new wxBoxSizer(wxHORIZONTAL);
+    
+    // Transaction list (left side)
+    wxStaticBox* listBox = new wxStaticBox(this, wxID_ANY, "Transaction List");
+    wxStaticBoxSizer* listSizer = new wxStaticBoxSizer(listBox, wxVERTICAL);
+    
+    transactionList = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, 
+                                   wxSize(700, 400), wxLC_REPORT | wxLC_SINGLE_SEL);
+    transactionList->AppendColumn("ID", wxLIST_FORMAT_RIGHT, 50);
+    transactionList->AppendColumn("Date", wxLIST_FORMAT_LEFT, 100);
+    transactionList->AppendColumn("Customer", wxLIST_FORMAT_LEFT, 150);
+    transactionList->AppendColumn("Amount", wxLIST_FORMAT_RIGHT, 100);
+    transactionList->AppendColumn("Payment", wxLIST_FORMAT_CENTER, 80);
+    transactionList->AppendColumn("Type", wxLIST_FORMAT_LEFT, 120);
+    transactionList->AppendColumn("Status", wxLIST_FORMAT_CENTER, 80);
+    
+    listSizer->Add(transactionList, 1, wxEXPAND | wxALL, 5);
+    
+    // Action buttons for transaction list
+    wxBoxSizer* listButtonSizer = new wxBoxSizer(wxHORIZONTAL);
+    addTransactionBtn = new wxButton(this, wxID_ADD, "Add Transaction");
+    editTransactionBtn = new wxButton(this, wxID_EDIT, "Edit");
+    deleteTransactionBtn = new wxButton(this, wxID_DELETE, "Delete");
+    refundBtn = new wxButton(this, wxID_UNDO, "Refund");
+    printReceiptBtn = new wxButton(this, wxID_PRINT, "Print Receipt");
+    
+    listButtonSizer->Add(addTransactionBtn, 0, wxALL, 5);
+    listButtonSizer->Add(editTransactionBtn, 0, wxALL, 5);
+    listButtonSizer->Add(deleteTransactionBtn, 0, wxALL, 5);
+    listButtonSizer->Add(refundBtn, 0, wxALL, 5);
+    listButtonSizer->Add(printReceiptBtn, 0, wxALL, 5);
+    
+    listSizer->Add(listButtonSizer, 0, wxALIGN_CENTER);
+    
+    // Summary section
+    wxStaticBox* summaryBox = new wxStaticBox(this, wxID_ANY, "Summary");
+    wxStaticBoxSizer* summarySizer = new wxStaticBoxSizer(summaryBox, wxVERTICAL);
+    
+    wxFlexGridSizer* summaryGrid = new wxFlexGridSizer(4, 2, 5, 10);
+    summaryGrid->AddGrowableCol(1);
+    
+    summaryGrid->Add(new wxStaticText(this, wxID_ANY, "Total Amount:"));
+    totalAmountText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    summaryGrid->Add(totalAmountText);
+    
+    summaryGrid->Add(new wxStaticText(this, wxID_ANY, "Cash:"));
+    cashAmountText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    summaryGrid->Add(cashAmountText);
+    
+    summaryGrid->Add(new wxStaticText(this, wxID_ANY, "M-Pesa:"));
+    mpesaAmountText = new wxStaticText(this, wxID_ANY, "KSh 0.00");
+    summaryGrid->Add(mpesaAmountText);
+    
+    summaryGrid->Add(new wxStaticText(this, wxID_ANY, "Count:"));
+    transactionCountText = new wxStaticText(this, wxID_ANY, "0");
+    summaryGrid->Add(transactionCountText);
+    
+    summarySizer->Add(summaryGrid, 0, wxEXPAND | wxALL, 10);
+    listSizer->Add(summarySizer, 0, wxEXPAND | wxALL, 5);
+    
+    contentSizer->Add(listSizer, 2, wxEXPAND | wxALL, 5);
+    
+    // Transaction form (right side)
+    wxStaticBox* formBox = new wxStaticBox(this, wxID_ANY, "Transaction Details");
+    wxStaticBoxSizer* formSizer = new wxStaticBoxSizer(formBox, wxVERTICAL);
+    
+    wxFlexGridSizer* formGrid = new wxFlexGridSizer(6, 2, 10, 10);
+    formGrid->AddGrowableCol(1);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Customer:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    customerChoice = new wxChoice(this, wxID_ANY);
+    formGrid->Add(customerChoice, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Amount:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    amountText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    formGrid->Add(amountText, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Payment Type:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    paymentTypeChoice = new wxChoice(this, wxID_ANY);
+    paymentTypeChoice->Append("Cash");
+    paymentTypeChoice->Append("M-Pesa");
+    paymentTypeChoice->SetSelection(0);
+    formGrid->Add(paymentTypeChoice, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Transaction Type:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    transactionTypeChoice = new wxChoice(this, wxID_ANY);
+    transactionTypeChoice->Append("Membership Payment");
+    transactionTypeChoice->Append("Daily Fee");
+    transactionTypeChoice->Append("Renewal");
+    transactionTypeChoice->Append("Refund");
+    transactionTypeChoice->Append("Other");
+    transactionTypeChoice->SetSelection(0);
+    formGrid->Add(transactionTypeChoice, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "Description:"), 0, wxALIGN_RIGHT | wxALIGN_TOP);
+    descriptionText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_PROCESS_ENTER);
+    descriptionText->SetMinSize(wxSize(-1, 60));
+    formGrid->Add(descriptionText, 1, wxEXPAND);
+    
+    formGrid->Add(new wxStaticText(this, wxID_ANY, "M-Pesa Code:"), 0, wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
+    mpesaCodeText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+    mpesaCodeText->Enable(false); // Initially disabled
+    formGrid->Add(mpesaCodeText, 1, wxEXPAND);
+    
+    formSizer->Add(formGrid, 0, wxEXPAND | wxALL, 10);
+    
+    contentSizer->Add(formSizer, 1, wxEXPAND | wxALL, 5);
+    
+    mainSizer->Add(contentSizer, 1, wxEXPAND);
+    
+    SetSizer(mainSizer);
+    
+    // Initially disable form buttons
+    UpdateButtonStates();
+}
+
+void TransactionPanel::RefreshData() {
+    PopulateTransactionList();
+    PopulateCustomerChoice();
+    ClearTransactionForm();
+    selectedTransactionId = -1;
+    UpdateButtonStates();
+    UpdateSummary();
+}
+
+void TransactionPanel::PopulateTransactionList() {
+    std::vector<Transaction> transactions = Transaction::getAllTransactions();
+    PopulateTransactionList(transactions);
+}
+
+void TransactionPanel::PopulateTransactionList(const std::vector<Transaction>& transactions) {
+    transactionList->DeleteAllItems();
+    
+    for (size_t i = 0; i < transactions.size(); ++i) {
+        const Transaction& transaction = transactions[i];
+        
+        long index = transactionList->InsertItem(i, wxString::Format("%d", transaction.getTransactionId()));
+        transactionList->SetItem(index, 1, transaction.getFormattedDate());
+        
+        // Get customer name
+        Customer customer;
+        if (customer.loadFromDatabase(transaction.getCustomerId())) {
+            transactionList->SetItem(index, 2, customer.getFullName());
+        } else {
+            transactionList->SetItem(index, 2, "Unknown");
+        }
+        
+        transactionList->SetItem(index, 3, transaction.getFormattedAmount());
+        transactionList->SetItem(index, 4, transaction.getPaymentTypeString());
+        transactionList->SetItem(index, 5, transaction.getTransactionTypeString());
+        transactionList->SetItem(index, 6, transaction.getStatusString());
+        
+        // Store transaction ID in item data
+        transactionList->SetItemData(index, transaction.getTransactionId());
+    }
+}
+
+void TransactionPanel::PopulateCustomerChoice() {
+    customerChoice->Clear();
+    std::vector<Customer> customers = Customer::getAllCustomers();
+    
+    for (const Customer& customer : customers) {
+        wxString customerInfo = wxString::Format("%s (%s)", 
+                                               customer.getFullName(), 
+                                               customer.getPhone());
+        customerChoice->Append(customerInfo, new wxStringClientData(wxString::Format("%d", customer.getCustomerId())));
+    }
+    
+    if (customerChoice->GetCount() > 0) {
+        customerChoice->SetSelection(0);
+    }
+}
+
+void TransactionPanel::UpdateTransactionForm(const Transaction& transaction) {
+    // Find and select customer
+    for (unsigned int i = 0; i < customerChoice->GetCount(); ++i) {
+        wxStringClientData* data = dynamic_cast<wxStringClientData*>(customerChoice->GetClientObject(i));
+        if (data && data->GetData() == wxString::Format("%d", transaction.getCustomerId())) {
+            customerChoice->SetSelection(i);
+            break;
+        }
+    }
+    
+    amountText->SetValue(wxString::Format("%.2f", transaction.getAmount()));
+    
+    // Set payment type
+    switch (transaction.getPaymentType()) {
+        case PaymentType::CASH:
+            paymentTypeChoice->SetSelection(0);
+            break;
+        case PaymentType::MPESA:
+            paymentTypeChoice->SetSelection(1);
+            break;
+    }
+    
+    // Set transaction type
+    switch (transaction.getTransactionType()) {
+        case TransactionType::MEMBERSHIP_PAYMENT:
+            transactionTypeChoice->SetSelection(0);
+            break;
+        case TransactionType::DAILY_FEE:
+            transactionTypeChoice->SetSelection(1);
+            break;
+        case TransactionType::RENEWAL:
+            transactionTypeChoice->SetSelection(2);
+            break;
+        case TransactionType::REFUND:
+            transactionTypeChoice->SetSelection(3);
+            break;
+        case TransactionType::OTHER:
+            transactionTypeChoice->SetSelection(4);
+            break;
+    }
+    
+    descriptionText->SetValue(transaction.getDescription());
+    mpesaCodeText->SetValue(transaction.getMpesaCode());
+    
+    // Enable/disable M-Pesa code field based on payment type
+    wxCommandEvent dummyEvent;
+    OnPaymentTypeChange(dummyEvent);
+}
+
+void TransactionPanel::ClearTransactionForm() {
+    if (customerChoice->GetCount() > 0) {
+        customerChoice->SetSelection(0);
+    }
+    amountText->Clear();
+    paymentTypeChoice->SetSelection(0);
+    transactionTypeChoice->SetSelection(0);
+    descriptionText->Clear();
+    mpesaCodeText->Clear();
+    mpesaCodeText->Enable(false);
+}
+
+bool TransactionPanel::ValidateTransactionForm() {
+    if (customerChoice->GetSelection() == wxNOT_FOUND) {
+        wxMessageBox("Please select a customer", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    double amount;
+    if (!amountText->GetValue().ToDouble(&amount) || amount <= 0) {
+        wxMessageBox("Please enter a valid amount", "Validation Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    if (paymentTypeChoice->GetSelection() == 1) { // M-Pesa
+        if (mpesaCodeText->GetValue().IsEmpty()) {
+            wxMessageBox("M-Pesa code is required for M-Pesa payments", "Validation Error", wxOK | wxICON_ERROR);
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+Transaction TransactionPanel::GetTransactionFromForm() {
+    Transaction transaction;
+    
+    // Get customer ID
+    wxStringClientData* data = dynamic_cast<wxStringClientData*>(
+        customerChoice->GetClientObject(customerChoice->GetSelection()));
+    if (data) {
+        long customerId;
+        data->GetData().ToLong(&customerId);
+        transaction.setCustomerId(customerId);
+    }
+    
+    double amount;
+    amountText->GetValue().ToDouble(&amount);
+    transaction.setAmount(amount);
+    
+    // Set payment type
+    PaymentType paymentType = (paymentTypeChoice->GetSelection() == 0) ? 
+                             PaymentType::CASH : PaymentType::MPESA;
+    transaction.setPaymentType(paymentType);
+    
+    // Set transaction type
+    TransactionType transactionType;
+    switch (transactionTypeChoice->GetSelection()) {
+        case 0: transactionType = TransactionType::MEMBERSHIP_PAYMENT; break;
+        case 1: transactionType = TransactionType::DAILY_FEE; break;
+        case 2: transactionType = TransactionType::RENEWAL; break;
+        case 3: transactionType = TransactionType::REFUND; break;
+        case 4: transactionType = TransactionType::OTHER; break;
+        default: transactionType = TransactionType::OTHER; break;
+    }
+    transaction.setTransactionType(transactionType);
+    
+    transaction.setDescription(descriptionText->GetValue().ToStdString());
+    
+    if (paymentType == PaymentType::MPESA) {
+        transaction.setMpesaCode(mpesaCodeText->GetValue().ToStdString());
+    }
+    
+    return transaction;
+}
+
+void TransactionPanel::UpdateSummary() {
+    std::vector<Transaction> transactions = Transaction::getAllTransactions();
+    
+    double totalAmount = 0.0;
+    double cashAmount = 0.0;
+    double mpesaAmount = 0.0;
+    int transactionCount = transactions.size();
+    
+    for (const Transaction& transaction : transactions) {
+        if (transaction.getStatus() == TransactionStatus::COMPLETED) {
+            totalAmount += transaction.getAmount();
+            
+            if (transaction.getPaymentType() == PaymentType::CASH) {
+                cashAmount += transaction.getAmount();
+            } else {
+                mpesaAmount += transaction.getAmount();
+            }
+        }
+    }
+    
+    totalAmountText->SetLabel(wxString::Format("KSh %.2f", totalAmount));
+    cashAmountText->SetLabel(wxString::Format("KSh %.2f", cashAmount));
+    mpesaAmountText->SetLabel(wxString::Format("KSh %.2f", mpesaAmount));
+    transactionCountText->SetLabel(wxString::Format("%d", transactionCount));
+}
+
+void TransactionPanel::UpdateButtonStates() {
+    bool hasSelection = (selectedTransactionId != -1);
+    
+    editTransactionBtn->Enable(hasSelection);
+    deleteTransactionBtn->Enable(hasSelection);
+    refundBtn->Enable(hasSelection);
+    printReceiptBtn->Enable(hasSelection);
+}
+
+void TransactionPanel::SelectTransaction(int transactionId) {
+    // Find and select transaction in list
+    for (long i = 0; i < transactionList->GetItemCount(); ++i) {
+        if (transactionList->GetItemData(i) == transactionId) {
+            transactionList->SetItemState(i, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
+            transactionList->EnsureVisible(i);
+            break;
+        }
+    }
+}
+
+void TransactionPanel::AddTransactionForCustomer(int customerId, double amount) {
+    // Find and select customer
+    for (unsigned int i = 0; i < customerChoice->GetCount(); ++i) {
+        wxStringClientData* data = dynamic_cast<wxStringClientData*>(customerChoice->GetClientObject(i));
+        if (data && data->GetData() == wxString::Format("%d", customerId)) {
+            customerChoice->SetSelection(i);
+            break;
+        }
+    }
+    
+    if (amount > 0.0) {
+        amountText->SetValue(wxString::Format("%.2f", amount));
+    }
+}
+
+// Transaction Panel Event Handlers
+void TransactionPanel::OnTransactionSelected(wxListEvent& event) {
+    long item = event.GetIndex();
+    if (item != -1) {
+        selectedTransactionId = transactionList->GetItemData(item);
+        
+        // Load transaction details
+        Transaction transaction;
+        if (transaction.loadFromDatabase(selectedTransactionId)) {
+            UpdateTransactionForm(transaction);
+        }
+    }
+    UpdateButtonStates();
+}
+
+void TransactionPanel::OnAddTransaction(wxCommandEvent& event) {
+    if (!ValidateTransactionForm()) {
+        return;
+    }
+    
+    Transaction transaction = GetTransactionFromForm();
+    
+    if (transaction.saveToDatabase()) {
+        wxMessageBox("Transaction added successfully", "Success", wxOK | wxICON_INFORMATION);
+        RefreshData();
+        
+        // Refresh main dashboard
+        MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+        if (mainFrame) {
+            mainFrame->RefreshDashboardPanel();
+            mainFrame->RefreshCustomerPanel();
+        }
+    } else {
+        wxMessageBox("Failed to add transaction", "Error", wxOK | wxICON_ERROR);
+    }
+}
+
+void TransactionPanel::OnEditTransaction(wxCommandEvent& event) {
+    if (selectedTransactionId == -1) return;
+    
+    if (!ValidateTransactionForm()) {
+        return;
+    }
+    
+    Transaction transaction = GetTransactionFromForm();
+    transaction.setTransactionId(selectedTransactionId);
+    
+    if (transaction.updateInDatabase()) {
+        wxMessageBox("Transaction updated successfully", "Success", wxOK | wxICON_INFORMATION);
+        RefreshData();
+        
+        // Refresh main dashboard
+        MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+        if (mainFrame) {
+            mainFrame->RefreshDashboardPanel();
+        }
+    } else {
+        wxMessageBox("Failed to update transaction", "Error", wxOK | wxICON_ERROR);
+    }
+}
+
+void TransactionPanel::OnDeleteTransaction(wxCommandEvent& event) {
+    if (selectedTransactionId == -1) return;
+    
+    int result = wxMessageBox("Are you sure you want to delete this transaction?",
+                             "Confirm Delete", 
+                             wxYES_NO | wxICON_QUESTION);
+    
+    if (result == wxYES) {
+        if (Transaction::deleteTransaction(selectedTransactionId)) {
+            wxMessageBox("Transaction deleted successfully", "Success", wxOK | wxICON_INFORMATION);
+            RefreshData();
+            
+            // Refresh main dashboard
+            MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+            if (mainFrame) {
+                mainFrame->RefreshDashboardPanel();
+            }
+        } else {
+            wxMessageBox("Failed to delete transaction", "Error", wxOK | wxICON_ERROR);
+        }
+    }
+}
+
+void TransactionPanel::OnRefundTransaction(wxCommandEvent& event) {
+    if (selectedTransactionId == -1) return;
+    
+    wxString reason = wxGetTextFromUser("Enter refund reason:", "Refund Transaction", "");
+    if (!reason.IsEmpty()) {
+        Transaction transaction;
+        if (transaction.loadFromDatabase(selectedTransactionId)) {
+            if (transaction.refundTransaction(reason.ToStdString())) {
+                wxMessageBox("Transaction refunded successfully", "Success", wxOK | wxICON_INFORMATION);
+                RefreshData();
+                
+                // Refresh main dashboard
+                MainFrame* mainFrame = dynamic_cast<MainFrame*>(GetParent()->GetParent());
+                if (mainFrame) {
+                    mainFrame->RefreshDashboardPanel();
+                }
+            } else {
+                wxMessageBox("Failed to refund transaction", "Error", wxOK | wxICON_ERROR);
+            }
+        }
+    }
+}
+
+void TransactionPanel::OnPrintReceipt(wxCommandEvent& event) {
+    if (selectedTransactionId == -1) return;
+    
+    // TODO: Implement receipt printing
+    wxMessageBox("Receipt printing functionality will be implemented next", 
+                 "Print Receipt", wxOK | wxICON_INFORMATION);
+}
+
+void TransactionPanel::OnFilterTransactions(wxCommandEvent& event) {
+    // TODO: Implement date and type filtering
+    wxMessageBox("Transaction filtering will be implemented next", 
+                 "Filter Transactions", wxOK | wxICON_INFORMATION);
+}
+
+void TransactionPanel::OnClearFilter(wxCommandEvent& event) {
+    // Reset date pickers to current date
+    wxDateTime today = wxDateTime::Now();
+    fromDate->SetValue(today);
+    toDate->SetValue(today);
+    
+    // Reset choice controls
+    paymentTypeFilter->SetSelection(0);
+    transactionTypeFilter->SetSelection(0);
+    
+    // Refresh with all transactions
+    PopulateTransactionList();
+    UpdateSummary();
+}
+
+void TransactionPanel::OnPaymentTypeChange(wxCommandEvent& event) {
+    // Enable/disable M-Pesa code field based on payment type selection
+    bool isMpesa = (paymentTypeChoice->GetSelection() == 1);
+    mpesaCodeText->Enable(isMpesa);
+    
+    if (!isMpesa) {
+        mpesaCodeText->Clear();
+    }
+}
+
+void TransactionPanel::OnCustomerChange(wxCommandEvent& event) {
+    // This can be used later for auto-filling transaction details based on customer
+}
+
+void TransactionPanel::OnTextEnter(wxCommandEvent& event) {
+    wxObject* source = event.GetEventObject();
+    
+    if (source == amountText) {
+        paymentTypeChoice->SetFocus();
+    } else if (source == descriptionText) {
+        if (paymentTypeChoice->GetSelection() == 1) { // M-Pesa
+            mpesaCodeText->SetFocus();
+        } else {
+            // Try to save transaction
+            wxCommandEvent dummyEvent;
+            if (selectedTransactionId == -1) {
+                OnAddTransaction(dummyEvent);
+            } else {
+                OnEditTransaction(dummyEvent);
+            }
+        }
+    } else if (source == mpesaCodeText) {
+        // Save transaction
+        wxCommandEvent dummyEvent;
+        if (selectedTransactionId == -1) {
+            OnAddTransaction(dummyEvent);
+        } else {
+            OnEditTransaction(dummyEvent);
+        }
+    }
+}
+
+// Quick Check-in Dialog Implementation
+wxBEGIN_EVENT_TABLE(QuickCheckInDialog, wxDialog)
+    EVT_TEXT(wxID_ANY, QuickCheckInDialog::OnSearch)
+    EVT_LIST_ITEM_SELECTED(wxID_ANY, QuickCheckInDialog::OnCustomerSelected)
+    EVT_LIST_ITEM_ACTIVATED(wxID_ANY, QuickCheckInDialog::OnCustomerDoubleClick)
+    EVT_BUTTON(wxID_OK, QuickCheckInDialog::OnCheckIn)
+    EVT_BUTTON(wxID_CANCEL, QuickCheckInDialog::OnCancel)
+    EVT_CHOICE(wxID_ANY, QuickCheckInDialog::OnPaymentTypeChange)
+wxEND_EVENT_TABLE()
+
+QuickCheckInDialog::QuickCheckInDialog(wxWindow* parent) 
+    : wxDialog(parent, wxID_ANY, "Quick Check-In", wxDefaultPosition, wxSize(600, 500)), 
+      selectedCustomerId(-1) {
+    CreateLayout();
+    PopulateCustomerList();
+    UpdateButtonStates();
+}
+
+void QuickCheckInDialog::CreateLayout() {
+    wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+    
+    // Title
+    wxStaticText* title = new wxStaticText(this, wxID_ANY, "Quick Customer Check-In");
+    wxFont titleFont = title->GetFont();
+    titleFont.SetPointSize(14);
+    titleFont.SetWeight(wxFONTWEIGHT_BOLD);
+    title->SetFont(titleFont);
+    mainSizer->Add(title, 0, wxALIGN_CENTER | wxALL, 10);
+    
+    // Search section
+    wxStaticBox* searchBox = new wxStaticBox(this, wxID_ANY, "Search Customer");
+    wxStaticBoxSizer* searchSizer = new wxStaticBoxSizer(searchBox, wxHORIZONTAL);
+    
+    searchSizer->Add(new wxStaticText(this, wxID_ANY, "Name or Phone:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    searchText = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(200, -1));
+    searchSizer->Add(searchText, 1, wxEXPAND | wxALL, 5);
+    
+    mainSizer->Add(searchSizer, 0, wxEXPAND | wxALL, 5);
+    
+    // Customer list
+    wxStaticBox* listBox = new wxStaticBox(this, wxID_ANY, "Select Customer");
+    wxStaticBoxSizer* listSizer = new wxStaticBoxSizer(listBox, wxVERTICAL);
+    
+    customerList = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, 
+                                 wxSize(-1, 250), wxLC_REPORT | wxLC_SINGLE_SEL);
+    customerList->AppendColumn("Name", wxLIST_FORMAT_LEFT, 180);
+    customerList->AppendColumn("Phone", wxLIST_FORMAT_LEFT, 120);
+    customerList->AppendColumn("Membership", wxLIST_FORMAT_CENTER, 100);
+    customerList->AppendColumn("Status", wxLIST_FORMAT_CENTER, 80);
+    customerList->AppendColumn("Expiry", wxLIST_FORMAT_CENTER, 100);
+    
+    listSizer->Add(customerList, 1, wxEXPAND | wxALL, 5);
+    mainSizer->Add(listSizer, 1, wxEXPAND | wxALL, 5);
+    
+    // Payment section (for daily customers or expired customers)
+    wxStaticBox* paymentBox = new wxStaticBox(this, wxID_ANY, "Payment (if required)");
+    wxStaticBoxSizer* paymentSizer = new wxStaticBoxSizer(paymentBox, wxHORIZONTAL);
+    
+    paymentSizer->Add(new wxStaticText(this, wxID_ANY, "Payment Type:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    paymentTypeChoice = new wxChoice(this, wxID_ANY);
+    paymentTypeChoice->Append("Cash");
+    paymentTypeChoice->Append("M-Pesa");
+    paymentTypeChoice->SetSelection(0);
+    paymentSizer->Add(paymentTypeChoice, 0, wxALL, 5);
+    
+    paymentSizer->Add(new wxStaticText(this, wxID_ANY, "M-Pesa Code:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    mpesaCodeText = new wxTextCtrl(this, wxID_ANY);
+    mpesaCodeText->Enable(false);
+    paymentSizer->Add(mpesaCodeText, 1, wxEXPAND | wxALL, 5);
+    
+    mainSizer->Add(paymentSizer, 0, wxEXPAND | wxALL, 5);
+    
+    // Buttons
+    wxBoxSizer* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
+    checkInBtn = new wxButton(this, wxID_OK, "Check In");
+    cancelBtn = new wxButton(this, wxID_CANCEL, "Cancel");
+    
+    buttonSizer->Add(checkInBtn, 0, wxALL, 5);
+    buttonSizer->Add(cancelBtn, 0, wxALL, 5);
+    
+    mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER | wxALL, 10);
+    
+    SetSizer(mainSizer);
+}
+
+void QuickCheckInDialog::PopulateCustomerList() {
+    std::vector<Customer> customers = Customer::getAllCustomers();
+    PopulateCustomerList(customers);
+}
+
+void QuickCheckInDialog::PopulateCustomerList(const std::vector<Customer>& customers) {
+    customerList->DeleteAllItems();
+    
+    for (size_t i = 0; i < customers.size(); ++i) {
+        const Customer& customer = customers[i];
+        
+        long index = customerList->InsertItem(i, customer.getFullName());
+        customerList->SetItem(index, 1, customer.getPhone());
+        customerList->SetItem(index, 2, customer.getMembershipTypeString());
+        customerList->SetItem(index, 3, customer.getStatusString());
+        
+        // Format expiry date
+        if (customer.getExpiryDate() > 0) {
+            std::time_t expiryTime = customer.getExpiryDate();
+            struct tm* timeinfo = localtime(&expiryTime);
+            char buffer[11];
+            strftime(buffer, 11, "%Y-%m-%d", timeinfo);
+            customerList->SetItem(index, 4, buffer);
+        } else {
+            customerList->SetItem(index, 4, "N/A");
+        }
+        
+        // Store customer ID in item data
+        customerList->SetItemData(index, customer.getCustomerId());
+        
+        // Highlight expired customers in red
+        if (customer.getStatus() == CustomerStatus::EXPIRED) {
+            customerList->SetItemTextColour(index, *wxRED);
+        }
+    }
+}
+
+void QuickCheckInDialog::UpdateButtonStates() {
+    bool hasSelection = (selectedCustomerId != -1);
+    checkInBtn->Enable(hasSelection);
+}
+
+bool QuickCheckInDialog::ProcessCheckIn() {
+    if (selectedCustomerId == -1) return false;
+    
+    Customer customer;
+    if (!customer.loadFromDatabase(selectedCustomerId)) {
+        wxMessageBox("Failed to load customer data", "Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    // Check if customer needs to pay (daily membership or expired)
+    bool needsPayment = (customer.getMembershipType() == MembershipType::DAILY) || 
+                        (customer.getStatus() == CustomerStatus::EXPIRED);
+    
+    if (needsPayment) {
+        // Validate payment information
+        if (paymentTypeChoice->GetSelection() == 1) { // M-Pesa
+            if (mpesaCodeText->GetValue().IsEmpty()) {
+                wxMessageBox("M-Pesa code is required for M-Pesa payments", 
+                           "Payment Required", wxOK | wxICON_ERROR);
+                return false;
+            }
+        }
+        
+        // Determine amount based on membership type
+        double amount = 0.0;
+        TransactionType transType = TransactionType::DAILY_FEE;
+        std::string description = "Daily gym fee";
+        
+        if (customer.getMembershipType() == MembershipType::DAILY) {
+            amount = 300.0; // Daily fee - adjust as needed
+        } else if (customer.getStatus() == CustomerStatus::EXPIRED) {
+            // Renewal payment
+            switch (customer.getMembershipType()) {
+                case MembershipType::WEEKLY:
+                    amount = 1500.0; // Weekly fee - adjust as needed
+                    break;
+                case MembershipType::MONTHLY:
+                    amount = 3500.0; // Monthly fee - adjust as needed
+                    break;
+                case MembershipType::TRAINER:
+                    amount = 100.0; // Trainer fee - adjust as needed
+                    break;
+                default:
+                    amount = 200.0;
+            }
+            transType = TransactionType::RENEWAL;
+            description = customer.getMembershipTypeString() + " membership renewal";
+        }
+        
+        // Create and save transaction
+        Transaction transaction(selectedCustomerId, amount, 
+                              (paymentTypeChoice->GetSelection() == 0) ? PaymentType::CASH : PaymentType::MPESA,
+                              transType, description);
+        
+        if (paymentTypeChoice->GetSelection() == 1) { // M-Pesa
+            transaction.setMpesaCode(mpesaCodeText->GetValue().ToStdString());
+        }
+        
+        transaction.setStatus(TransactionStatus::COMPLETED);
+        
+        if (!transaction.saveToDatabase()) {
+            wxMessageBox("Failed to save payment transaction", "Error", wxOK | wxICON_ERROR);
+            return false;
+        }
+        
+        // Update customer expiry if it was a renewal
+        if (transType == TransactionType::RENEWAL) {
+            customer.calculateExpiryDate();
+            customer.updateInDatabase();
+        }
+    }
+    
+    // Perform check-in
+    if (!customer.checkIn()) {
+        wxMessageBox("Check-in failed", "Error", wxOK | wxICON_ERROR);
+        return false;
+    }
+    
+    wxString message = wxString::Format("Customer %s checked in successfully", customer.getFullName());
+    if (needsPayment) {
+        message += wxString::Format("\nPayment processed: KSh %.2f", 
+                                  (customer.getMembershipType() == MembershipType::DAILY) ? 100.0 : 
+                                  (customer.getMembershipType() == MembershipType::WEEKLY) ? 500.0 :
+                                  (customer.getMembershipType() == MembershipType::MONTHLY) ? 1500.0 : 2500.0);
+    }
+    
+    wxMessageBox(message, "Check-In Successful", wxOK | wxICON_INFORMATION);
+    return true;
+}
+
+// Event handlers
+void QuickCheckInDialog::OnSearch(wxCommandEvent& event) {
+    wxString searchTerm = searchText->GetValue();
+    std::vector<Customer> customers;
+    
+    if (!searchTerm.IsEmpty()) {
+        customers = Customer::findByName(searchTerm.ToStdString());
+        
+        // Also search by phone if no name matches found
+        if (customers.empty()) {
+            std::vector<Customer> allCustomers = Customer::getAllCustomers();
+            for (const Customer& customer : allCustomers) {
+                if (customer.getPhone().find(searchTerm.ToStdString()) != std::string::npos) {
+                    customers.push_back(customer);
+                }
+            }
+        }
+    } else {
+        customers = Customer::getAllCustomers();
+    }
+    
+    PopulateCustomerList(customers);
+    selectedCustomerId = -1;
+    UpdateButtonStates();
+}
+
+void QuickCheckInDialog::OnCustomerSelected(wxListEvent& event) {
+    long item = event.GetIndex();
+    if (item != -1) {
+        selectedCustomerId = customerList->GetItemData(item);
+    }
+    UpdateButtonStates();
+}
+
+void QuickCheckInDialog::OnCustomerDoubleClick(wxListEvent& event) {
+    wxCommandEvent dummyEvent;
+    OnCheckIn(dummyEvent);
+}
+
+void QuickCheckInDialog::OnCheckIn(wxCommandEvent& event) {
+    if (ProcessCheckIn()) {
+        EndModal(wxID_OK);
+    }
+}
+
+void QuickCheckInDialog::OnCancel(wxCommandEvent& event) {
+    EndModal(wxID_CANCEL);
+}
+
+void QuickCheckInDialog::OnPaymentTypeChange(wxCommandEvent& event) {
+    bool isMpesa = (paymentTypeChoice->GetSelection() == 1);
+    mpesaCodeText->Enable(isMpesa);
+    
+    if (!isMpesa) {
+        mpesaCodeText->Clear();
+    }
+}

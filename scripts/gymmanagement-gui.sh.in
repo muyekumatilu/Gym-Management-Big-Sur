@@ -1,0 +1,24 @@
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXECUTABLE="@CMAKE_BINARY_DIR@/GymManagement_gui"
+
+echo "Starting Gym Management System - GUI Version"
+echo "============================================="
+
+# Check if executable exists
+if [ ! -f "$EXECUTABLE" ]; then
+    echo "Error: Executable not found at $EXECUTABLE"
+    echo "Please build the project first with 'make'"
+    exit 1
+fi
+
+# Check if running in a graphical environment
+if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+    echo "Warning: No graphical display detected."
+    echo "GUI version requires a graphical environment."
+    echo "Consider running the console version instead:"
+    echo "  ./GymManagement_console"
+    exit 1
+fi
+
+# Run the GUI application
+exec "$EXECUTABLE" "$@"

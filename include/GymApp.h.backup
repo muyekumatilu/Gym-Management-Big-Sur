@@ -1,0 +1,342 @@
+// File: include/GymApp.h
+#ifndef GYM_APP_H
+#define GYM_APP_H
+
+#include <wx/wx.h>
+#include <wx/notebook.h>
+#include <wx/listctrl.h>
+#include <wx/datectrl.h>
+#include <wx/dateevt.h>
+#include <wx/spinctrl.h>
+#include <wx/choice.h>
+#include <wx/timer.h>
+#include <wx/statusbr.h>
+#include <algorithm>
+#include "Customer.h"
+#include "Transaction.h"
+#include "Inventory.h"
+#include "Reports.h"
+#include "DatabaseManager.h"
+
+// Forward declarations
+class CustomerPanel;
+class TransactionPanel;
+class InventoryPanel;
+class ReportsPanel;
+class DashboardPanel;
+class QuickCheckInDialog;
+
+// Main Application Class
+class GymApp : public wxApp {
+public:
+    virtual bool OnInit();
+    virtual int OnExit();
+};
+
+// Quick Check-in Dialog
+class QuickCheckInDialog : public wxDialog {
+private:
+    wxTextCtrl* searchText;
+    wxListCtrl* customerList;
+    wxChoice* paymentTypeChoice;
+    wxTextCtrl* mpesaCodeText;
+    wxButton* checkInBtn;
+    wxButton* cancelBtn;
+    
+    int selectedCustomerId;
+    
+    // Event handlers
+    void OnSearch(wxCommandEvent& event);
+    void OnCustomerSelected(wxListEvent& event);
+    void OnCustomerDoubleClick(wxListEvent& event);
+    void OnCheckIn(wxCommandEvent& event);
+    void OnCancel(wxCommandEvent& event);
+    void OnPaymentTypeChange(wxCommandEvent& event);
+    
+    // Helper methods
+    void CreateLayout();
+    void PopulateCustomerList();
+    void PopulateCustomerList(const std::vector<Customer>& customers);
+    void UpdateButtonStates();
+    bool ProcessCheckIn();
+    
+public:
+    QuickCheckInDialog(wxWindow* parent);
+    
+    wxDECLARE_EVENT_TABLE();
+};
+
+// Main Frame Class
+class MainFrame : public wxFrame {
+private:
+    // UI Components
+    wxNotebook* notebook;
+    DashboardPanel* dashboardPanel;
+    CustomerPanel* customerPanel;
+    TransactionPanel* transactionPanel;
+    InventoryPanel* inventoryPanel;
+    ReportsPanel* reportsPanel;
+    
+    // Status bar
+    wxStatusBar* statusBar;
+    wxTimer* refreshTimer;
+    
+    // Database
+    DatabaseManager* dbManager;
+    
+    // Menu and toolbar
+    wxMenuBar* menuBar;
+    wxToolBar* toolBar;
+    
+    // Event handlers
+    void OnExit(wxCommandEvent& event);
+    void OnAbout(wxCommandEvent& event);
+    void OnRefreshData(wxCommandEvent& event);
+    void OnBackupDatabase(wxCommandEvent& event);
+    void OnRestoreDatabase(wxCommandEvent& event);
+    void OnSettings(wxCommandEvent& event);
+    void OnTimer(wxTimerEvent& event);
+    void OnClose(wxCloseEvent& event);
+    
+    // Helper methods
+    void CreateMenuBar();
+    void CreateToolBar();
+    void CreateStatusBar();
+    void UpdateStatusBar();
+    bool InitializeDatabase();
+    void RefreshAllPanels();
+    
+public:
+    MainFrame();
+    virtual ~MainFrame();
+    
+    // Public methods for panels to communicate
+    void RefreshCustomerPanel();
+    void RefreshTransactionPanel();
+    void RefreshInventoryPanel();
+    void RefreshReportsPanel();
+    void RefreshDashboardPanel();
+
+    void OnNewCustomer(wxCommandEvent& event);
+    void OnQuickCheckIn(wxCommandEvent& event);
+    void OnDailyPayment(wxCommandEvent& event);
+    void OnViewReports(wxCommandEvent& event);
+    
+    wxDECLARE_EVENT_TABLE();
+};
+
+// Dashboard Panel - Shows quick overview
+class DashboardPanel : public wxPanel {
+private:
+    // Quick stats display
+    wxStaticText* totalCustomersText;
+    wxStaticText* activeCustomersText;
+    wxStaticText* expiredCustomersText;
+    wxStaticText* todayRevenueText;
+    wxStaticText* weekRevenueText;
+    wxStaticText* monthRevenueText;
+    wxStaticText* currentCheckedInText;
+    
+    // Recent activity list
+    wxListCtrl* recentActivityList;
+    
+    // Quick action buttons
+    wxButton* quickCheckInBtn;
+    wxButton* newCustomerBtn;
+    wxButton* dailyPaymentBtn;
+    wxButton* viewReportsBtn;
+    
+    // Event handlers
+    void OnQuickCheckIn(wxCommandEvent& event);
+    void OnNewCustomer(wxCommandEvent& event);
+    void OnDailyPayment(wxCommandEvent& event);
+    void OnViewReports(wxCommandEvent& event);
+    void OnRefresh(wxCommandEvent& event);
+    
+    // Helper methods
+    void UpdateQuickStats();
+    void UpdateRecentActivity();
+    void CreateLayout();
+    
+public:
+    DashboardPanel(wxWindow* parent);
+    void RefreshData();
+    
+    wxDECLARE_EVENT_TABLE();
+};
+
+// Customer Management Panel
+class CustomerPanel : public wxPanel {
+private:
+    // Customer list
+    wxListCtrl* customerList;
+    
+    // Search controls
+    wxTextCtrl* searchText;
+    wxChoice* membershipFilter;
+    wxChoice* statusFilter;
+    wxButton* searchBtn;
+    wxButton* clearSearchBtn;
+    
+    // Customer form controls
+    wxTextCtrl* firstNameText;
+    wxTextCtrl* lastNameText;
+    wxTextCtrl* phoneText;
+    wxTextCtrl* emailText;
+    wxChoice* membershipChoice;
+    
+    // Action buttons
+    wxButton* addBtn;
+    wxButton* editBtn;
+    wxButton* deleteBtn;
+    wxButton* renewBtn;
+    wxButton* checkInBtn;
+    wxButton* checkOutBtn;
+    wxButton* viewTransactionsBtn;
+    wxButton* clearFormBtn;
+    
+    // Current selected customer
+    int selectedCustomerId;
+    
+    // Event handlers
+    void OnCustomerSelected(wxListEvent& event);
+    void OnCustomerDoubleClick(wxListEvent& event);
+    void OnAddCustomer(wxCommandEvent& event);
+    void OnEditCustomer(wxCommandEvent& event);
+    void OnDeleteCustomer(wxCommandEvent& event);
+    void OnRenewMembership(wxCommandEvent& event);
+    void OnCheckIn(wxCommandEvent& event);
+    void OnCheckOut(wxCommandEvent& event);
+    void OnViewTransactions(wxCommandEvent& event);
+    void OnSearch(wxCommandEvent& event);
+    void OnClearSearch(wxCommandEvent& event);
+    void OnMembershipFilterChange(wxCommandEvent& event);
+    void OnStatusFilterChange(wxCommandEvent& event);
+    void OnClearForm(wxCommandEvent& event);
+    void OnMembershipTypeChange(wxCommandEvent& event);
+    void OnPhoneTextChange(wxCommandEvent& event);
+    
+    // Helper methods
+    void CreateLayout();
+    void PopulateCustomerList();
+    void PopulateCustomerList(const std::vector<Customer>& customers);
+    void UpdateCustomerForm(const Customer& customer);
+    bool ValidateCustomerForm();
+    Customer GetCustomerFromForm();
+    void UpdateButtonStates();
+    void CheckForSimilarCustomers(const std::string& firstName, const std::string& lastName, const std::string& phone);
+    void HighlightSelectedCustomer();
+    std::string FormatPhoneNumber(const std::string& phone);
+    void OnTextEnter(wxCommandEvent& event);
+    void OnLastFieldEnter(wxCommandEvent& event);
+    
+public:
+    CustomerPanel(wxWindow* parent);
+    void RefreshData();
+    void SelectCustomer(int customerId);
+    void ClearCustomerForm();
+
+    wxTextCtrl* GetFirstNameControl() { return firstNameText; }
+
+    wxDECLARE_EVENT_TABLE();
+};
+
+// Transaction Panel
+class TransactionPanel : public wxPanel {
+private:
+    // Transaction list
+    wxListCtrl* transactionList;
+    
+    // Filter controls
+    wxDatePickerCtrl* fromDate;
+    wxDatePickerCtrl* toDate;
+    wxChoice* paymentTypeFilter;
+    wxChoice* transactionTypeFilter;
+    wxTextCtrl* customerSearchText;
+    wxButton* filterBtn;
+    wxButton* clearFilterBtn;
+    
+    // Transaction form
+    wxChoice* customerChoice;
+    wxTextCtrl* amountText;
+    wxChoice* paymentTypeChoice;
+    wxChoice* transactionTypeChoice;
+    wxTextCtrl* descriptionText;
+    wxTextCtrl* mpesaCodeText;
+    
+    // Action buttons
+    wxButton* addTransactionBtn;
+    wxButton* editTransactionBtn;
+    wxButton* deleteTransactionBtn;
+    wxButton* refundBtn;
+    wxButton* printReceiptBtn;
+    
+    // Summary display
+    wxStaticText* totalAmountText;
+    wxStaticText* cashAmountText;
+    wxStaticText* mpesaAmountText;
+    wxStaticText* transactionCountText;
+    
+    // Current selected transaction
+    int selectedTransactionId;
+    
+    // Event handlers
+    void OnTransactionSelected(wxListEvent& event);
+    void OnAddTransaction(wxCommandEvent& event);
+    void OnEditTransaction(wxCommandEvent& event);
+    void OnDeleteTransaction(wxCommandEvent& event);
+    void OnRefundTransaction(wxCommandEvent& event);
+    void OnPrintReceipt(wxCommandEvent& event);
+    void OnFilterTransactions(wxCommandEvent& event);
+    void OnClearFilter(wxCommandEvent& event);
+    void OnPaymentTypeChange(wxCommandEvent& event);
+    void OnCustomerChange(wxCommandEvent& event);
+    
+    // Helper methods
+    void CreateLayout();
+    void PopulateTransactionList();
+    void PopulateTransactionList(const std::vector<Transaction>& transactions);
+    void PopulateCustomerChoice();
+    void UpdateTransactionForm(const Transaction& transaction);
+    void ClearTransactionForm();
+    bool ValidateTransactionForm();
+    Transaction GetTransactionFromForm();
+    void UpdateSummary();
+    void UpdateButtonStates();
+
+    void OnTextEnter(wxCommandEvent& event);
+    void OnLastFieldEnter(wxCommandEvent& event);
+    
+    void CheckForSimilarCustomers(const std::string& firstName, const std::string& lastName, const std::string& phone);
+
+public:
+    TransactionPanel(wxWindow* parent);
+    void RefreshData();
+    void SelectTransaction(int transactionId);
+    void AddTransactionForCustomer(int customerId, double amount = 0.0);
+    void SetTransactionTypeToDaily() {
+    if (transactionTypeChoice) {
+        transactionTypeChoice->SetSelection(1); // Daily Fee is index 1
+    }
+}
+    
+    wxDECLARE_EVENT_TABLE();
+};
+
+// Custom Event IDs
+enum {
+    ID_REFRESH_DATA = wxID_HIGHEST + 1,
+    ID_BACKUP_DB,
+    ID_RESTORE_DB,
+    ID_SETTINGS,
+    ID_QUICK_CHECKIN,
+    ID_NEW_CUSTOMER,
+    ID_DAILY_PAYMENT,
+    ID_VIEW_REPORTS,
+    ID_REFRESH_TIMER,
+    ID_MEMBERSHIP_CHOICE,
+    ID_MEMBERSHIP_FILTER,
+    ID_STATUS_FILTER
+};
+
+#endif // GYM_APP_H
